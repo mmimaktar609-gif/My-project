@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hriday Bot Panel</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo">🤖</div><div><b>Bot Panel</b><small>Hriday Hosting</small></div></div>
+  <div class="status"><span class="dot red"></span> সার্ভার <span class="dot green"></span> DB ✅</div>
+</header>
+
+<main>
+  <section class="cards">
+    <div class="card"><div class="ico">💾</div><strong id="memory">0 MB</strong><span>Memory</span></div>
+    <div class="card"><div class="ico">⏱️</div><strong id="uptime">0m</strong><span>Server Uptime</span></div>
+    <div class="card"><div class="ico">📦</div><strong id="bots">0</strong><span>Bot Files</span></div>
+    <div class="card"><div class="ico">🚀</div><strong id="starts">0</strong><span>Total Start</span></div>
+    <div class="card small"><div class="ico">💥</div><strong id="crashes">0</strong><span>Crash</span></div>
+    <div class="card small"><div class="ico">🖥️</div><strong id="node">-</strong><span>Node.js</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>🤖 Bot Manager</h2>
+    <div class="create">
+      <input id="newBot" placeholder="Bot name যেমন: Mim">
+      <button onclick="createBot()">➕ Create Bot</button>
+    </div>
+    <div id="botList"></div>
+  </section>
+
+  <section class="panel">
+    <h2>📜 Console Logs</h2>
+    <select id="logBot" onchange="loadLogs()"></select>
+    <pre id="logs">Select a bot...</pre>
+  </section>
+
+  <section class="panel">
+    <h2>📁 File Upload</h2>
+    <select id="uploadBot"></select>
+    <input type="file" id="file">
+    <button onclick="uploadFile()">📤 Upload</button>
+    <p class="note">Only upload code you own or are authorized to run.</p>
+  </section>
+</main>
+
+<nav>
+  <span>🏠<small>হোম</small></span>
+  <span>📊<small>স্ট্যাটাস</small></span>
+  <span>📋<small>লগ</small></span>
+  <span>📁<small>ফাইল</small></span>
+  <span>⚙️<small>সেটিং</small></span>
+</nav>
+
+<script src="/app.js"></script>
+</body>
+</html>
