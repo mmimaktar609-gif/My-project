@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HRIDOY BOT PANEL - Login</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="login-page">
+  <div class="login-box">
+    <div class="logo">💠</div>
+    <h1>HRIDOY BOT PANEL</h1>
+    <p>🔐 Admin Login</p>
+
+    <form id="loginForm">
+      <input id="username" autocomplete="username" placeholder="Admin Username" required>
+      <input id="password" type="password" autocomplete="current-password" placeholder="Admin Password" required>
+      <button class="primary full" type="submit">🔐 Login</button>
+    </form>
+
+    <div id="error" class="error"></div>
+  </div>
+
+<script>
+loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  error.textContent = "";
+
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        username: username.value,
+        password: password.value
+      })
+    });
+
+    const data = await r.json();
+
+    if (!r.ok) throw new Error(data.error || "Login failed");
+
+    location.href = "/dashboard.html";
+  } catch (err) {
+    error.textContent = "❌ " + err.message;
+  }
+});
+</script>
+</body>
+</html>
