@@ -1,176 +1,161 @@
 const express = require("express");
-const session = require("express-session");
-const http = require("http");
-const path = require("path");
 const fs = require("fs");
-const os = require("os");
+const path = require("path");
 const { spawn } = require("child_process");
-const { Server } = require("socket.io");
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+const PORT = Number(process.env.PORT || 3000);
+const ROOT = __dirname;
+const DATA = path.join(ROOT, "data");
+const BOTS = path.join(DATA, "bots");
 
-const PORT = process.env.PORT || 3000;
-const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASS = process.env.ADMIN_PASS || "change-me-now";
-const BOT_DIR = path.join(__dirname, "bots");
-const BOT_ENTRY = process.env.BOT_ENTRY || "index.js";
+fs.mkdirSync(BOTS, { recursive: true });
 
-let bot = null;
-let startedAt = null;
-let starts = 0;
-let crashes = 0;
-let logs = [];
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(ROOT, "public")));
 
-function addLog(line) {
-  const item = `[${new Date().toLocaleString()}] ${line}`;
-  logs.push(item);
-  if (logs.length > 300) logs.shift();
-  io.emit("log", item);
+const processes = new Map();
+
+function safeName(name) {
+  return String(name || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40);
 }
 
-function isRunning() {
-  return !!bot && !bot.killed;
+function botDir(name) {
+  return path.join(BOTS, safeName(name));
 }
 
-function safePath(base, requested) {
-  const resolved = path.resolve(base, requested || ".");
-  return resolved === path.resolve(base) || resolved.startsWith(path.resolve(base) + path.sep)
-    ? resolved : null;
+function botMeta(name) {
+  return path.join(botDir(name), "bot.json");
 }
 
-function auth(req,res,next) {
-  if (req.session?.user) return next();
-  return res.status(401).json({error:"Unauthorized"});
-}
-
-app.use(express.json({limit:"2mb"}));
-app.use(express.urlencoded({extended:true}));
-app.use(session({
-  secret: process.env.SESSION_SECRET || "deo-panel-change-this-secret",
-  resave: false,
-  saveUninitialized: false,
-  cookie: {httpOnly:true, sameSite:"lax", secure:false, maxAge: 86400000}
-}));
-app.use(express.static(path.join(__dirname,"public")));
-
-app.post("/api/login",(req,res)=>{
-  const {username,password}=req.body;
-  if(username===ADMIN_USER && password===ADMIN_PASS){
-    req.session.user=username;
-    return res.json({ok:true});
+function readBots() {
+  const result = [];
+  for (const name of fs.readdirSync(BOTS)) {
+    const dir = botDir(name);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    let meta = { name, command: "node index.js" };
+    try { meta = { ...meta, ...JSON.parse(fs.readFileSync(botMeta(name), "utf8")) }; } catch {}
+    result.push({
+      name,
+      command: meta.command,
+      status: processes.has(name) ? "running" : "stopped",
+      pid: processes.get(name)?.pid || null
+    });
   }
-  res.status(401).json({ok:false,error:"Invalid login"});
-});
-app.post("/api/logout",(req,res)=>req.session.destroy(()=>res.json({ok:true})));
-app.get("/api/me",(req,res)=>res.json({loggedIn:!!req.session?.user}));
-
-app.get("/api/stats",auth,(req,res)=>{
-  const mem=process.memoryUsage();
-  const uptime=startedAt ? Math.floor((Date.now()-startedAt)/1000) : 0;
-  res.json({
-    running:isRunning(),
-    memoryMB:Math.round(mem.rss/1024/1024),
-    serverUptime:Math.floor(process.uptime()),
-    botUptime:uptime,
-    starts, crashes,
-    node:process.version,
-    files:countFiles(BOT_DIR)
-  });
-});
-
-function countFiles(dir){
-  let n=0;
-  if(!fs.existsSync(dir)) return 0;
-  for(const e of fs.readdirSync(dir,{withFileTypes:true})){
-    if(e.name==="node_modules") continue;
-    const p=path.join(dir,e.name);
-    n += e.isDirectory()?countFiles(p):1;
-  }
-  return n;
+  return result;
 }
 
-app.get("/api/logs",auth,(req,res)=>res.json({logs}));
+function appendLog(name, text) {
+  const dir = botDir(name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(path.join(dir, "console.log"), text);
+}
 
-app.post("/api/bot/start",auth,(req,res)=>{
-  if(isRunning()) return res.json({ok:true,message:"Bot already running"});
-  const entry=safePath(BOT_DIR,BOT_ENTRY);
-  if(!entry || !fs.existsSync(entry)) return res.status(400).json({ok:false,error:`Missing bots/${BOT_ENTRY}`});
+function startBot(name) {
+  name = safeName(name);
+  const dir = botDir(name);
+  if (!name || !fs.existsSync(dir)) throw new Error("Bot not found");
+  if (processes.has(name)) return;
 
-  bot=spawn(process.execPath,[entry],{
-    cwd:BOT_DIR,
-    env:{...process.env,NODE_ENV:"production"},
-    stdio:["ignore","pipe","pipe"]
+  let meta = { command: "node index.js" };
+  try { meta = { ...meta, ...JSON.parse(fs.readFileSync(botMeta(name), "utf8")) }; } catch {}
+
+  const parts = String(meta.command).match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const command = (parts.shift() || "node").replace(/^"|"$/g, "");
+  const args = parts.map(x => x.replace(/^"|"$/g, ""));
+
+  appendLog(name, `\n[${new Date().toISOString()}] START ${meta.command}\n`);
+
+  const child = spawn(command, args, {
+    cwd: dir,
+    env: { ...process.env },
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"]
   });
-  starts++;
-  startedAt=Date.now();
-  addLog(`BOT STARTED (PID ${bot.pid})`);
 
-  bot.stdout.on("data",d=>addLog(String(d).trim()));
-  bot.stderr.on("data",d=>addLog("ERR: "+String(d).trim()));
-  bot.on("exit",(code,signal)=>{
-    addLog(`BOT EXITED code=${code} signal=${signal||"none"}`);
-    if(code!==0) crashes++;
-    bot=null; startedAt=null;
-    io.emit("status");
+  processes.set(name, child);
+
+  child.stdout.on("data", d => appendLog(name, d.toString()));
+  child.stderr.on("data", d => appendLog(name, `[ERR] ${d.toString()}`));
+  child.on("close", code => {
+    appendLog(name, `[${new Date().toISOString()}] EXIT code=${code}\n`);
+    processes.delete(name);
   });
-  io.emit("status");
-  res.json({ok:true});
+  child.on("error", err => {
+    appendLog(name, `[SPAWN ERROR] ${err.message}\n`);
+    processes.delete(name);
+  });
+}
+
+function stopBot(name) {
+  name = safeName(name);
+  const child = processes.get(name);
+  if (!child) return false;
+  child.kill("SIGTERM");
+  setTimeout(() => {
+    if (processes.get(name) === child) child.kill("SIGKILL");
+  }, 5000);
+  return true;
+}
+
+app.get("/api/bots", (req, res) => res.json(readBots()));
+
+app.post("/api/bots", (req, res) => {
+  const name = safeName(req.body.name);
+  const command = String(req.body.command || "node index.js").trim();
+  if (!name) return res.status(400).json({ error: "Valid bot name required" });
+  if (!/^[\w./ -]+$/.test(command) || command.includes("&&") || command.includes(";") || command.includes("|"))
+    return res.status(400).json({ error: "Unsafe command format" });
+
+  const dir = botDir(name);
+  if (fs.existsSync(dir)) return res.status(409).json({ error: "Bot already exists" });
+
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(botMeta(name), JSON.stringify({ name, command }, null, 2));
+  fs.writeFileSync(path.join(dir, "index.js"),
+`console.log("Bot ${name} started");\nsetInterval(() => console.log("${name}: running"), 30000);\n`);
+  res.json({ ok: true, name });
 });
 
-app.post("/api/bot/stop",auth,(req,res)=>{
-  if(!isRunning()) return res.json({ok:true,message:"Bot is not running"});
-  bot.kill("SIGTERM");
-  addLog("STOP requested");
-  res.json({ok:true});
+app.post("/api/bots/:name/start", (req, res) => {
+  try { startBot(req.params.name); res.json({ ok: true }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.post("/api/bot/restart",auth,(req,res)=>{
-  if(isRunning()) bot.kill("SIGTERM");
-  setTimeout(()=>{
-    const entry=safePath(BOT_DIR,BOT_ENTRY);
-    if(!entry || !fs.existsSync(entry)) return;
-    bot=spawn(process.execPath,[entry],{cwd:BOT_DIR,env:{...process.env,NODE_ENV:"production"},stdio:["ignore","pipe","pipe"]});
-    starts++; startedAt=Date.now(); addLog(`BOT RESTARTED (PID ${bot.pid})`);
-    bot.stdout.on("data",d=>addLog(String(d).trim()));
-    bot.stderr.on("data",d=>addLog("ERR: "+String(d).trim()));
-    bot.on("exit",(code,signal)=>{addLog(`BOT EXITED code=${code} signal=${signal||"none"}`);if(code!==0)crashes++;bot=null;startedAt=null;io.emit("status");});
-  },800);
-  res.json({ok:true});
+app.post("/api/bots/:name/stop", (req, res) => {
+  res.json({ ok: stopBot(req.params.name) });
 });
 
-app.get("/api/files",auth,(req,res)=>{
-  const dir=safePath(BOT_DIR,req.query.path||".");
-  if(!dir || !fs.existsSync(dir)) return res.status(400).json({error:"Invalid path"});
-  const items=fs.readdirSync(dir,{withFileTypes:true}).map(x=>({name:x.name,type:x.isDirectory()?"dir":"file"}));
-  res.json({path:req.query.path||".",items});
+app.post("/api/bots/:name/restart", (req, res) => {
+  try {
+    stopBot(req.params.name);
+    setTimeout(() => { try { startBot(req.params.name); } catch {} }, 800);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.get("/api/file",auth,(req,res)=>{
-  const p=safePath(BOT_DIR,req.query.path);
-  if(!p || !fs.existsSync(p) || !fs.statSync(p).isFile()) return res.status(404).json({error:"File not found"});
-  if(fs.statSync(p).size>1024*1024) return res.status(413).json({error:"File too large"});
-  res.type("text/plain").send(fs.readFileSync(p,"utf8"));
+app.delete("/api/bots/:name", (req, res) => {
+  const name = safeName(req.params.name);
+  if (processes.has(name)) stopBot(name);
+  const dir = botDir(name);
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: "Bot not found" });
+  fs.rmSync(dir, { recursive: true, force: true });
+  res.json({ ok: true });
 });
 
-app.put("/api/file",auth,(req,res)=>{
-  const p=safePath(BOT_DIR,req.body.path);
-  if(!p) return res.status(400).json({error:"Invalid path"});
-  fs.mkdirSync(path.dirname(p),{recursive:true});
-  fs.writeFileSync(p,String(req.body.content||""));
-  addLog(`FILE SAVED: ${req.body.path}`);
-  res.json({ok:true});
+app.get("/api/bots/:name/logs", (req, res) => {
+  const name = safeName(req.params.name);
+  const file = path.join(botDir(name), "console.log");
+  if (!fs.existsSync(file)) return res.json({ logs: "" });
+  let logs = fs.readFileSync(file, "utf8");
+  if (logs.length > 20000) logs = logs.slice(-20000);
+  res.json({ logs });
 });
 
-io.on("connection",socket=>{
-  socket.emit("status",{running:isRunning()});
-  socket.emit("logs",logs);
+app.get("*", (req, res) => {
+  res.sendFile(path.join(ROOT, "public", "index.html"));
 });
 
-app.get("*",(req,res)=>{
-  if(req.path.startsWith("/api/")) return res.status(404).end();
-  res.sendFile(path.join(__dirname,"public","index.html"));
+app.listen(PORT, () => {
+  console.log(`HRIDOY BOT PANEL V2 running on port ${PORT}`);
 });
-
-server.listen(PORT,()=>console.log(`Deo Bot Panel running on port ${PORT}`));
