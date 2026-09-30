@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HRIDOY BOT PANEL V3</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>💠 HRIDOY BOT PANEL</h1>
+    <p>V3 • Admin Dashboard</p>
+  </div>
+  <div class="head-actions">
+    <span id="adminName"></span>
+    <button onclick="logout()">🚪 Logout</button>
+    <button class="primary" onclick="openCreate()">＋ Create Bot</button>
+  </div>
+</header>
+
+<main>
+  <section class="stats">
+    <div class="card"><b id="total">0</b><span>🤖 Total Bots</span></div>
+    <div class="card"><b id="online">0</b><span>🟢 Running</span></div>
+    <div class="card"><b id="offline">0</b><span>🔴 Stopped</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-title">
+      <h2>🤖 Bot Manager</h2>
+      <button onclick="loadBots()">↻ Refresh</button>
+    </div>
+    <div id="bots" class="bots"></div>
+  </section>
+
+  <section id="console" class="panel hidden">
+    <div class="panel-title">
+      <h2>📜 Console: <span id="consoleName"></span></h2>
+      <button onclick="closeConsole()">Close</button>
+    </div>
+    <pre id="logs">Loading...</pre>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <h2>➕ Create Bot</h2>
+    <input id="botName" placeholder="Bot name e.g. deo">
+    <input id="botCommand" value="node index.js" placeholder="Start command">
+    <div class="modal-actions">
+      <button onclick="closeCreate()">Cancel</button>
+      <button class="primary" onclick="createBot()">Create</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function api(url, options={}) {
+  const r = await fetch(url, {
+    headers: {"Content-Type":"application/json"},
+    ...options
+  });
+
+  const data = await r.json().catch(()=>({}));
+
+  if (r.status === 401) {
+    location.href = "/login.html";
+    throw new Error("Session expired");
+  }
+
+  if (!r.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+async function checkAuth() {
+  const data = await api("/api/me");
+  if (!data.authenticated) {
+    location.href = "/login.html";
+    return;
+  }
+  adminName.textContent = "👤 " + data.username;
+  loadBots();
+}
+
+async function loadBots() {
+  try {
+    const bots = await api("/api/bots");
+
+    total.textContent = bots.length;
+    online.textContent = bots.filter(b=>b.status==="running").length;
+    offline.textContent = bots.filter(b=>b.status!=="running").length;
+
+    const box = document.getElementById("bots");
+
+    if (!bots.length) {
+      box.innerHTML = '<div class="empty">কোনো Bot নেই। “Create Bot” চাপুন।</div>';
+      return;
+    }
+
+    box.innerHTML = bots.map(b => `
+      <article class="bot">
+        <div class="bot-info">
+          <div class="bot-icon">🤖</div>
+          <div>
+            <h3>${escapeHtml(b.name)}</h3>
+            <small>${escapeHtml(b.command)}</small>
+          </div>
+        </div>
+
+        <span class="status ${b.status}">
+          ${b.status==="running" ? "● RUNNING" : "● STOPPED"}
+        </span>
+
+        <div class="actions">
+          <button onclick="act('${b.name}','start')">▶ Start</button>
+          <button onclick="act('${b.name}','stop')">⏹ Stop</button>
+          <button onclick="act('${b.name}','restart')">🔄 Restart</button>
+          <button onclick="showLogs('${b.name}')">📜 Logs</button>
+          <button class="danger" onclick="removeBot('${b.name}')">🗑 Delete</button>
+        </div>
+      </article>
+    `).join("");
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+async function act(name, action) {
+  try {
+    await api(`/api/bots/${encodeURIComponent(name)}/${action}`, {method:"POST"});
+    await loadBots();
+  } catch(e) {
+    alert(e.message);
+  }
+}
+
+async function removeBot(name) {
+  if (!confirm(`Delete ${name}?`)) return;
+
+  try {
+    await api(`/api/bots/${encodeURIComponent(name)}`, {method:"DELETE"});
+    await loadBots();
+  } catch(e) {
+    alert(e.message);
+  }
+}
+
+async function showLogs(name) {
+  document.getElementById("console").classList.remove("hidden");
+  document.getElementById("consoleName").textContent = name;
+
+  try {
+    const data = await api(`/api/bots/${encodeURIComponent(name)}/logs`);
+    document.getElementById("logs").textContent = data.logs || "No logs yet.";
+  } catch(e) {
+    document.getElementById("logs").textContent = e.message;
+  }
+
+  document.getElementById("console").scrollIntoView({behavior:"smooth"});
+}
+
+function closeConsole() {
+  document.getElementById("console").classList.add("hidden");
+}
+
+function openCreate() {
+  document.getElementById("modal").classList.remove("hidden");
+}
+
+function closeCreate() {
+  document.getElementById("modal").classList.add("hidden");
+}
+
+async function createBot() {
+  try {
+    await api("/api/bots", {
+      method:"POST",
+      body:JSON.stringify({
+        name:botName.value,
+        command:botCommand.value
+      })
+    });
+
+    botName.value = "";
+    closeCreate();
+    await loadBots();
+  } catch(e) {
+    alert(e.message);
+  }
+}
+
+async function logout() {
+  await api("/api/logout", {method:"POST"});
+  location.href = "/login.html";
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;",
+    "<":"&lt;",
+    ">":"&gt;",
+    '"':"&quot;",
+    "'":"&#039;"
+  }[c]));
+}
+
+checkAuth();
+setInterval(loadBots, 5000);
+</script>
+</body>
+  </html>
