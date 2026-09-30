@@ -1,12 +1,16 @@
 {
-  "name": "deo-bot-panel-v2",
+  "name": "hriday-bot-panel-v2",
   "version": "2.0.0",
-  "description": "Mobile-friendly Bot Panel with bot process control, file manager and live logs",
+  "description": "Mobile-friendly Node.js bot management panel",
   "main": "server.js",
-  "scripts": {"start": "node server.js"},
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "express": "^5.1.0",
-    "express-session": "^1.18.2",
-    "socket.io": "^4.8.1"
+    "express": "^4.21.2"
   }
 }
