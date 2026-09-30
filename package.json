@@ -1,0 +1,12 @@
+{
+  "name": "deo-bot-panel-v2",
+  "version": "2.0.0",
+  "description": "Mobile-friendly Bot Panel with bot process control, file manager and live logs",
+  "main": "server.js",
+  "scripts": {"start": "node server.js"},
+  "dependencies": {
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "socket.io": "^4.8.1"
+  }
+}
